@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Painel SOC · Windows</title>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#050a12;--ink:#cfe9f2;--dim:#6d8a98;--ok:#3fe0ff;--sus:#ffb347;--atk:#ff3d8b;--line:#12303d;color-scheme:dark;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:"Chakra Petch",ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+canvas#c{position:fixed;inset:0;width:100%;height:100%;transform-origin:50% 50%;will-change:transform}
+.hud{position:fixed;pointer-events:none;padding:14px 18px;transition:left 1.6s ease,right 1.6s ease}
+#top{margin-top:14px}.bar{display:flex;align-items:center;gap:8px;font-size:12px;margin:3px 0;max-width:210px}.bar span{width:100px;overflow:hidden;text-overflow:ellipsis}.bar i{display:block;height:5px;background:var(--atk);transition:width .5s}
+#left{left:0;top:env(safe-area-inset-top,0px);width:250px}
+#right{right:0;top:env(safe-area-inset-top,0px);width:min(360px,46vw);}
+h1{font-size:15px;font-weight:600;margin:0 0 2px;letter-spacing:.04em}
+.sub{font-size:12px;color:var(--dim);margin:0 0 18px}
+#ev{font-size:54px;font-weight:600;line-height:1;color:var(--ok);font-variant-numeric:tabular-nums}
+.lbl{font-size:12px;color:var(--dim);margin-bottom:6px}
+#spark{width:210px;height:44px;display:block;margin:8px 0 16px}
+.cnt{display:flex;justify-content:space-between;font-size:13px;border-top:1px solid var(--line);padding:6px 0;max-width:210px}
+.cnt b{font-variant-numeric:tabular-nums}
+#log{list-style:none;margin:0;padding:0;font-size:12.5px}
+#log li{border-left:2px solid var(--ok);padding:3px 8px;margin-bottom:5px;background:linear-gradient(90deg,#08202b88,transparent);animation:in .4s}
+#log li.sus{border-color:var(--sus)}#log li.atk{border-color:var(--atk);color:#ffd0e2}
+#log time{color:var(--dim);margin-right:8px}
+@keyframes in{from{opacity:0;transform:translateX(12px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){#log li{animation:none}.hud{transition:none}}
+@media (min-width:701px){body.b #left{left:calc(100% - 270px)}body.b #right{right:calc(100% - min(360px,46vw))}}
+@media (max-width:700px){#right{top:auto;bottom:env(safe-area-inset-bottom,0px);width:100%;padding:8px 14px}#log li:nth-child(n+4){display:none}#left{width:200px}#ev{font-size:40px}}
+</style>
+</head>
+<body>
+<canvas id="c" aria-label="Visualização animada de tráfego de rede e alertas de segurança"></canvas>
+<div class="hud" id="left">
+  <h1>Painel de segurança</h1>
+  <p class="sub" id="mode" title="Arraste a cena para girar">Conectando ao agente…</p>
+  <div id="ev">0</div>
+  <div class="lbl">falhas de login nos últimos 60 s</div>
+  <canvas id="spark" width="420" height="88"></canvas>
+  <div class="cnt"><span>Falhas de login</span><b id="tot">0</b></div>
+  <div class="cnt"><span>Contas diferentes</span><b id="blk">0</b></div>
+  <div class="cnt"><span>Alertas críticos</span><b id="alr">0</b></div>
+  <div class="cnt"><span>Conexões abertas agora</span><b id="nopen">0</b></div>
+  <div class="cnt"><span>Novas conexões (60 s)</span><b id="nnew">0</b></div>
+  <div id="top"></div>
+</div>
+<div class="hud" id="right"><ul id="log"></ul></div>
+<script>
+const cv=document.getElementById('c'),cx=cv.getContext('2d');
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let W,H,CX,CY,S,R,src=[],srv=[];
+const P=[],rings=[],hist=[],hot={};
+let tm=0,spike=0,flash=0,beat=0,ev=20,tot=0,blk=0,alr=0,acc=0,lastLog=0;
+const CC=["BR","US","DE","CN","RU","IN","FR","JP","NG","AR","GB","KR"];
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+let D,F,FY,yaw=0,pitch=.3,yawU=0,pitchU=0,drag=false;
+function size(){
+  const d=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;
+  cv.width=W*d;cv.height=H*d;cx.setTransform(d,0,0,d,0,0);
+  CX=W/2;CY=H/2;S=Math.min(W,H);R=S*.2;D=S*1.9;F=S*1.65;FY=S*.34;
+  const wide=Math.min(W/H,1.5);
+  src=[];for(let i=0;i<48;i++){const a=Math.random()*6.283,el=(Math.random()-.5)*1.5,ce=Math.cos(el);
+    src.push({x:Math.cos(a)*ce*S*.62*wide,y:Math.sin(el)*S*.4,z:Math.sin(a)*ce*S*.62,cc:pick(CC),p:0});}
+  srv=[];for(let i=0;i<6;i++){const a=i/6*6.283+.5;
+    srv.push({x:Math.cos(a)*S*.1,y:(i%2?-1:1)*S*.04,z:Math.sin(a)*S*.1,n:i+1,p:0,bad:0});}
+}
+function proj(x,y,z){
+  const cy=Math.cos(yaw),sy=Math.sin(yaw);let X=x*cy+z*sy,Z=-x*sy+z*cy;
+  const cp=Math.cos(pitch),sp=Math.sin(pitch),Y=y*cp-Z*sp;Z=y*sp+Z*cp;
+  const k=F/(D+Z);return[CX+X*k,CY+Y*k,k,Z];
+}
+cv.style.touchAction='none';cv.style.cursor='grab';
+cv.addEventListener('pointerdown',e=>{drag=true;cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointerup',()=>{drag=false});
+cv.addEventListener('pointermove',e=>{if(drag){yawU=Math.max(-.6,Math.min(.6,yawU+e.movementX*.005));pitchU=Math.max(-.4,Math.min(.4,pitchU+e.movementY*.004))}});
+addEventListener('resize',size);size();
+
+function spawn(heat){
+  const r=Math.random();
+  const kind='ok'; /* fluxos azuis de fundo: decorativos */
+  const s=pick(src),v=pick(srv);let to=v,blocked=false;
+  if(kind!=='ok')hot[s.cc]=(hot[s.cc]||0)+1;
+  if(kind==='atk'&&Math.random()<.7){
+    blocked=true;const a=Math.atan2(s.y-CY,s.x-CX);to={x:CX+Math.cos(a)*R,y:CY+Math.sin(a)*R};}
+  P.push({s,to,v,kind,blocked,t:0,sp:.3+Math.random()*.35,c:(Math.random()-.5)*70});
+}
+function pos3(p,t){
+  const x=p.s.x+(p.to.x-p.s.x)*t,y=p.s.y+(p.to.y-p.s.y)*t,z=p.s.z+(p.to.z-p.s.z)*t;
+  return proj(x,y-Math.sin(Math.PI*t)*p.c*2,z);
+}
+const col={ok:'63,224,255',sus:'255,179,71',atk:'255,61,139'};
+function log(kind,txt){
+  const ul=document.getElementById('log'),li=document.createElement('li'),n=new Date();
+  li.className=kind;li.innerHTML='<time>'+n.toTimeString().slice(0,8)+'</time>'+txt;
+  ul.prepend(li);while(ul.children.length>12)ul.lastChild.remove();
+}
+function ring(n,c,max,sp){rings.push({n,r:2,max,sp,c})}
+function arrive(p){
+  if(p.net){const q=p.out?p.to:p.v;if(!p.out)p.v.p=1;ring(q,col[p.kind],p.kind==='sus'?40:22,60);return;}
+  if(p.blocked){blk++;ring(p.to,col.ok,26,60);
+    if(Math.random()<.25)log('',"Ataque bloqueado na borda · origem "+p.s.cc);return;}
+  if(p.kind==='atk'){alr++;flash=1;p.v.bad=1;ring(p.v,col.atk,S*.34,260);ring(p.v,col.atk,S*.2,160);
+    log('atk',(p.real?"Possível ataque de senha (5 falhas ou mais em 1 min)":"Alerta crítico")+" · origem "+p.s.cc);return;}
+  p.v.p=1;
+  if(p.real){ring(p.v,col.sus,40,70);return;}
+  if(p.kind==='sus'&&Math.random()<.12){ring(p.v,col.sus,40,70);
+    log('sus',pick(["Várias falhas de login seguidas","Varredura de portas detectada","Acesso fora do horário"])+" · origem "+p.s.cc);}
+}
+function spark(){
+  const s=document.getElementById('spark'),c=s.getContext('2d');
+  c.clearRect(0,0,s.width,s.height);c.strokeStyle='#3fe0ff';c.lineWidth=2;c.beginPath();
+  hist.forEach((v,i)=>{const x=i/59*s.width,y=s.height-4-v/50*(s.height-8);i?c.lineTo(x,y):c.moveTo(x,y)});c.stroke();
+}
+const users=new Set(),recent={},c60=[],n60=[];let lastId=-1,netLast=-1,lastNetLog=0;
+function realEvent(e){
+  const hasIp=e.ip&&e.ip!=='-'&&e.ip!=='::1'&&e.ip!=='127.0.0.1';
+  const key=hasIp?e.ip:'local';
+  let h=0;for(const ch of key+(e.user||''))h=(h*31+ch.charCodeAt(0))>>>0;
+  const s=src[h%src.length],v=pick(srv),now=Date.now();
+  s.cc=hasIp?e.ip:'este PC';
+  c60.push(now);users.add(e.user||'?');tot++;
+  recent[key]=(recent[key]||[]).filter(t=>now-t<6e4).concat(now);
+  const burst=recent[key].length>=5;
+  hot[s.cc]=(hot[s.cc]||0)+1;
+  P.push({s,to:v,v,kind:burst?'atk':'sus',blocked:false,t:0,sp:.3+Math.random()*.2,c:(Math.random()-.5)*70,real:e});
+  if(!burst)log('sus','Falha de login · conta '+(e.user||'?')+' · origem '+s.cc);
+}
+async function poll(){
+  const m=document.getElementById('mode');
+  try{
+    const d=await (await fetch('/api/events?since='+lastId)).json();
+    m.textContent=d.readable?'Dados reais do Windows · conectado':'Sem permissão para ler o log (abra como administrador)';
+    d.events.forEach(realEvent);lastId=d.last;
+  }catch(x){m.textContent='Agente desconectado · rode o soc_agent.py';}
+  setTimeout(poll,2000);
+}
+poll();
+let netBusy=0;
+function netEvent(e){
+  let h=0;for(const ch of e.remote)h=(h*31+ch.charCodeAt(0))>>>0;
+  const s=src[h%src.length],v=pick(srv),now=Date.now(),out=e.dir==='out',kind=e.sus?'sus':'ok';
+  s.cc=e.remote;n60.push(now);
+  if(e.sus)hot[e.remote]=(hot[e.remote]||0)+1;
+  const base={kind,blocked:false,t:0,sp:.3+Math.random()*.25,c:(Math.random()-.5)*60,v,net:e,out};
+  P.push(out?Object.assign({s:v,to:s},base):Object.assign({s,to:v},base));
+  const txt=(out?'Saída · ':'Entrada · ')+(e.proc||'processo '+e.pid)+(out?' → ':' ← ')+e.remote+':'+e.port;
+  if(e.sus)log('sus','Conexão incomum · '+txt);
+  else if(now-lastNetLog>3000){lastNetLog=now;log('',txt);}
+}
+async function netPoll(){
+  try{
+    const d=await (await fetch('/api/net?since='+netLast)).json();
+    document.getElementById('nopen').textContent=d.open;
+    d.events.slice(-25).forEach(netEvent);netLast=d.last;
+  }catch(x){}
+  setTimeout(netPoll,2000);
+}
+netPoll();
+function bars(){const e=Object.entries(hot).sort((a,b)=>b[1]-a[1]).slice(0,5),m=e.length?e[0][1]:1;
+  document.getElementById('top').innerHTML='<div class="lbl">Origens mais ativas</div>'+e.map(([k,v])=>'<div class="bar"><span>'+k+'</span><i style="width:'+Math.round(v/m*100)+'%"></i></div>').join('');
+  for(const k in hot)hot[k]*=.92;}
+let last=performance.now(),sampleT=0;
+function frame(now){
+  const dt=Math.min((now-last)/1000,.05);last=now;tm+=dt;
+  document.body.classList.toggle('b',Math.floor(tm/25)%2===1);
+  spike*=Math.pow(.4,dt);if(Math.random()<dt*.08)spike=18;
+  while(c60.length&&Date.now()-c60[0]>6e4)c60.shift();while(n60.length&&Date.now()-n60[0]>6e4)n60.shift();const target=6+Math.min(30,c60.length*5)+Math.min(14,n60.length*.7);
+  ev+=(target-ev)*Math.min(1,dt*3);
+  const heat=Math.min(1,Math.max(0,(ev-8)/34));
+  acc+=.8*dt;while(acc>=1){acc--;spawn(0)}
+  beat+=ev*dt*.12;flash*=Math.pow(.05,dt);
+  sampleT+=dt;if(sampleT>=.5){sampleT=0;hist.push(Math.min(50,c60.length*4));if(hist.length>60)hist.shift();spark();bars();}
+
+  yaw=(reduce?.2:Math.sin(tm/17)*.6+Math.sin(tm/5.3)*.06)+yawU;pitch=.32+(reduce?0:.07*Math.sin(tm/7))+pitchU;
+  if(!drag){yawU*=Math.pow(.5,dt);pitchU*=Math.pow(.5,dt)}
+  cx.fillStyle='#050a12';cx.fillRect(0,0,W,H);
+  const gl=cx.createRadialGradient(CX,CY,0,CX,CY,S*.7);
+  gl.addColorStop(0,'rgba(63,224,255,'+(.1+.1*heat)+')');gl.addColorStop(1,'rgba(5,10,18,0)');
+  cx.fillStyle=gl;cx.fillRect(0,0,W,H);
+  // duas grades em planos diferentes (piso e teto)
+  const st=S*.14,off=reduce?0:(tm*S*.02)%st,E=S*1.1;
+  for(const [py,al] of [[FY,.12],[-FY,.05]]){
+    cx.strokeStyle='rgba(63,224,255,'+al+')';cx.lineWidth=1;cx.beginPath();
+    for(let u=-E;u<=E;u+=st){
+      let a=proj(u+off,py,-E),b=proj(u+off,py,E);cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);
+      a=proj(-E,py,u+off);b=proj(E,py,u+off);cx.moveTo(a[0],a[1]);cx.lineTo(b[0],b[1]);}
+    cx.stroke();}
+  // escudo: esfera de aramado
+  const wire=pts=>{cx.beginPath();pts.forEach((q,i)=>{const a=proj(q[0],q[1],q[2]);i?cx.lineTo(a[0],a[1]):cx.moveTo(a[0],a[1])});cx.stroke()};
+  cx.strokeStyle='rgba(63,224,255,.4)';cx.lineWidth=1.2;
+  for(const ly of [-.6,0,.6]){const rr=R*Math.sqrt(1-ly*ly),pts=[];
+    for(let i=0;i<=40;i++){const a=i/40*6.283;pts.push([Math.cos(a)*rr,ly*R,Math.sin(a)*rr])}wire(pts)}
+  for(let m=0;m<3;m++){const th=m/3*Math.PI+(reduce?0:tm*.3),pts=[];
+    for(let i=0;i<=40;i++){const a=i/40*6.283;pts.push([Math.cos(a)*R*Math.cos(th),Math.sin(a)*R,Math.cos(a)*R*Math.sin(th)])}wire(pts)}
+  const o=proj(0,0,0);cx.fillStyle='rgba(63,224,255,'+(.25+.2*Math.sin(beat*6.28))+')';
+  cx.beginPath();cx.arc(o[0],o[1],R*.14*o[2],0,7);cx.fill();
+  const dep=a=>Math.max(.25,Math.min(1,a[2]*.9));
+  src.forEach(q=>{const a=proj(q.x,q.y,q.z),z=2.6*a[2];cx.fillStyle='rgba(140,170,185,'+dep(a)*.8+')';cx.fillRect(a[0]-z/2,a[1]-z/2,z,z)});
+  srv.forEach(v=>{v.p*=Math.pow(.1,dt);v.bad*=Math.pow(.25,dt);
+    const a=proj(v.x,v.y,v.z),f=proj(v.x,FY,v.z),c=v.bad>.05?col.atk:col.ok,al=.5+v.p*.5+v.bad*.5,z=(8+v.p*5+v.bad*9)*a[2];
+    cx.strokeStyle='rgba('+c+',.18)';cx.lineWidth=1;cx.beginPath();cx.moveTo(a[0],a[1]);cx.lineTo(f[0],f[1]);cx.stroke();
+    cx.fillStyle='rgba('+c+','+al+')';cx.fillRect(a[0]-z/2,a[1]-z/2,z,z);});
+  cx.globalCompositeOperation='lighter';
+  for(let i=P.length-1;i>=0;i--){
+    const p=P[i];p.t+=p.sp*dt;
+    if(p.t>=1){arrive(p);P.splice(i,1);continue}
+    const a=pos3(p,p.t),b=pos3(p,Math.max(0,p.t-.09));
+    const g=cx.createLinearGradient(b[0],b[1],a[0],a[1]);
+    g.addColorStop(0,'rgba('+col[p.kind]+',0)');g.addColorStop(1,'rgba('+col[p.kind]+','+dep(a)+')');
+    cx.strokeStyle=g;cx.lineWidth=(p.kind==='atk'?2.8:1.6)*a[2];
+    cx.beginPath();cx.moveTo(b[0],b[1]);cx.lineTo(a[0],a[1]);cx.stroke();
+  }
+  for(let i=rings.length-1;i>=0;i--){
+    const r=rings[i];r.r+=r.sp*dt;const k=r.r/r.max;
+    if(k>=1){rings.splice(i,1);continue}
+    cx.strokeStyle='rgba('+r.c+','+(1-k)*.9+')';cx.lineWidth=2;cx.beginPath();
+    for(let j=0;j<=28;j++){const a=j/28*6.283,q=proj(r.n.x+Math.cos(a)*r.r,r.n.y,r.n.z+Math.sin(a)*r.r);j?cx.lineTo(q[0],q[1]):cx.moveTo(q[0],q[1])}
+    cx.stroke();
+  }
+  cx.globalCompositeOperation='source-over';
+  if(flash>.02){const f=cx.createRadialGradient(CX,CY,S*.3,CX,CY,Math.max(W,H)*.7);
+    f.addColorStop(0,'rgba(255,61,139,0)');f.addColorStop(1,'rgba(255,61,139,'+flash*.28+')');
+    cx.fillStyle=f;cx.fillRect(0,0,W,H);}
+  // HUD
+  document.getElementById('ev').textContent=c60.length;
+  document.getElementById('tot').textContent=tot.toLocaleString('pt-BR');
+  document.getElementById('blk').textContent=users.size;
+  document.getElementById('alr').textContent=alr.toLocaleString('pt-BR');
+  document.getElementById('nnew').textContent=n60.length;
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+<script>addEventListener('keydown',e=>{if(e.key==='F11'&&window.pywebview&&pywebview.api){e.preventDefault();pywebview.api.fullscreen()}});</script>
+</body>
+</html>
