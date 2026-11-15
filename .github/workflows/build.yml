@@ -1,0 +1,42 @@
+name: Gerar instalador do Windows
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Gerar o programa (.exe)
+        run: pyinstaller --noconfirm --windowed --onedir --uac-admin --name PainelSOC --add-data "painel-soc.html;." --collect-all webview soc_app.py
+
+      - name: Instalar o Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Gerar o instalador
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PainelSOC-Setup
+          path: Output/PainelSOC-Setup.exe
+
+      - name: Publicar na aba Releases (só quando for uma versão)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/PainelSOC-Setup.exe
